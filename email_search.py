@@ -51,7 +51,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Main title
-st.title("📧 Email Search Interface")
+st.title("Email Search Interface")
 st.markdown("Search through email summaries and metadata")
 
 # Sidebar for filters
@@ -106,7 +106,8 @@ def search_emails(query, limit):
         Subject,
         `From` as sender,
         `To` as recipient,
-        Date_Sent as date
+        Date_Sent as date,
+        filename
     FROM `{PROJECT_ID}.{DATASET}.{TABLE}`
     WHERE {where_clause}
     ORDER BY Date_Sent DESC
@@ -185,7 +186,7 @@ if search_button or search_query:
                     # Summary without highlighting for simplicity
                     st.markdown(f"**Body:** {row['Body'][:500]}...")  # Show first 500 chars
                     
-                    st.caption(f"Email ID: {row['email_id']}")
+                    st.caption(f"File: {row['filename']}")
                     
                     # Action buttons
                     col1, col2, col3 = st.columns([1, 1, 4])
@@ -193,8 +194,12 @@ if search_button or search_query:
                         if st.button("📋 Copy ID", key=f"copy_{idx}"):
                             st.code(row['email_id'])
                     with col2:
-                        if st.button("🔗 View Full", key=f"view_{idx}"):
-                            st.info(f"Open email {row['email_id']} in your email system")
+                        view_full = st.button("🔗 View Full", key=f"view_{idx}")
+                    
+                    # Show full body if button clicked
+                    if view_full:
+                        with st.expander("Full Email Body", expanded=True):
+                            st.text(row['Body'])
                     
                     st.markdown("---")
         else:
@@ -223,4 +228,4 @@ else:
 
 # Footer
 st.markdown("---")
-st.caption("Email Search Tool • Built with Streamlit")
+st.caption("Email Search Tool • AFP DataViz")
