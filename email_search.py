@@ -95,6 +95,20 @@ with st.sidebar:
         date_from = None
         date_to = None
 
+    # Export option
+    st.subheader("Export")
+    if st.button("📥 Export Results to CSV"):
+        if 'results_df' in st.session_state and not st.session_state.results_df.empty:
+            csv = st.session_state.results_df.to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name=f"email_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+        else:
+            st.warning("No results to export. Run a search first.")
+
 # Main search area
 col1, col2 = st.columns([4, 1])
 
@@ -293,16 +307,6 @@ else:
     - Use filters in the sidebar for more precise searches
     - Export results to CSV for further analysis
     """)
-    
-    # Show sample queries
-    with st.expander("📝 Example Searches"):
-        st.markdown("""
-        - `meeting schedule` - Find emails about meetings
-        - `contract payment` - Find financial discussions
-        - `urgent deadline` - Find time-sensitive emails
-        - Use date filters to focus on specific time periods
-        - Use sender/recipient filters to track communications with specific people
-        """)
 
 # Footer
 st.markdown("---")
