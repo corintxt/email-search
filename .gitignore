@@ -1,2 +1,5 @@
 .venv/
 .env
+secrets.toml
+*.json
+demo.py
