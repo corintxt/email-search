@@ -1,9 +1,10 @@
 [theme]
-primaryColor = "#FF4B4B"
-backgroundColor = "#FFFFFF"
+primaryColor = "#325aff"
+backgroundColor = "#ffffffa5"
 secondaryBackgroundColor = "#F0F2F6"
 textColor = "#262730"
 font = "sans serif"
+baseRadius = "none"
 
 [server]
 port = 8501

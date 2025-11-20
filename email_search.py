@@ -19,6 +19,40 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Password protection
+def check_password():
+    """Returns `True` if the user has entered the correct password."""
+    
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if st.session_state["password"] == st.secrets.get("APP_PASSWORD", os.getenv("APP_PASSWORD", "password123")):
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store password
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        # First run, show input for password
+        st.text_input(
+            "Password", type="password", on_change=password_entered, key="password"
+        )
+        st.info("Please enter the password to access this application.")
+        return False
+    elif not st.session_state["password_correct"]:
+        # Password incorrect, show input + error
+        st.text_input(
+            "Password", type="password", on_change=password_entered, key="password"
+        )
+        st.error("😕 Password incorrect")
+        return False
+    else:
+        # Password correct
+        return True
+
+# Check password before showing app
+if not check_password():
+    st.stop()  # Don't continue if password is not correct
+
 # Initialize BigQuery client (cached to avoid recreating)
 @st.cache_resource
 def get_bigquery_client():
@@ -73,7 +107,7 @@ with st.sidebar:
     # Search type
     search_type = st.radio(
         "Search in:",
-        ["Subject", "Body", "All fields"]  # "Summary" - not available in current table
+        ["All fields", "Subject", "Body"]  # "Summary" - not available in current table
     )
     
     # Sender/Recipient filters
@@ -301,13 +335,13 @@ if search_button or search_query:
         st.info("👆 Enter search terms above to begin")
 else:
     # Show some helpful information
-    st.info("💡 **Tips:**")
+    st.info("**Tips:**")
     st.markdown("""
-    - Use multiple keywords to narrow results
+    - Use multiple keywords to narrow results, e.g. `girls island`
     - Use filters in the sidebar for more precise searches
     - Export results to CSV for further analysis
     """)
 
 # Footer
 st.markdown("---")
-st.caption("Email Search Tool • AFP DataViz")
+st.caption("Email Search Tool • An AFP DataViz project")
