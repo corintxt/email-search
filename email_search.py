@@ -1,13 +1,14 @@
 # email_search_app.py
 import streamlit as st
 from google.cloud import bigquery
+from google.oauth2 import service_account
 import pandas as pd
 from datetime import datetime, timedelta
 import re
 import os
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables (for local development)
 load_dotenv()
 
 # Page configuration
@@ -21,14 +22,22 @@ st.set_page_config(
 # Initialize BigQuery client (cached to avoid recreating)
 @st.cache_resource
 def get_bigquery_client():
-    return bigquery.Client()
+    # Try to use Streamlit secrets first (for deployment), fallback to local auth
+    try:
+        credentials = service_account.Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"]
+        )
+        return bigquery.Client(credentials=credentials)
+    except (KeyError, FileNotFoundError):
+        # Local development - use default credentials
+        return bigquery.Client()
 
 client = get_bigquery_client()
 
-# Configuration from environment variables
-PROJECT_ID = os.getenv("PROJECT_ID")
-DATASET = os.getenv("DATASET")
-TABLE = os.getenv("TABLE")
+# Configuration - try Streamlit secrets first, fallback to environment variables
+PROJECT_ID = st.secrets.get("PROJECT_ID", os.getenv("PROJECT_ID"))
+DATASET = st.secrets.get("DATASET", os.getenv("DATASET"))
+TABLE = st.secrets.get("TABLE", os.getenv("TABLE"))
 
 # Custom CSS for better styling
 st.markdown("""
