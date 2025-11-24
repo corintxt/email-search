@@ -72,6 +72,7 @@ client = get_bigquery_client()
 PROJECT_ID = st.secrets.get("PROJECT_ID", os.getenv("PROJECT_ID"))
 DATASET = st.secrets.get("DATASET", os.getenv("DATASET"))
 TABLE = st.secrets.get("TABLE", os.getenv("TABLE"))
+SUMMARY = st.secrets.get("SUMMARY", os.getenv("SUMMARY"))
 
 # Custom CSS for better styling
 st.markdown("""
@@ -109,6 +110,27 @@ with st.sidebar:
         "Search in:",
         ["All fields", "Subject", "Body"]  # "Summary" - not available in current table
     )
+
+    # Summary display option
+    st.subheader("Display Options")
+    show_summaries = st.checkbox("Show summary")
+    
+    # Check if summary table exists when toggled
+    summary_table_exists = False
+    if show_summaries:
+        if not SUMMARY:
+            st.warning("⚠️ Summary table name not configured")
+            show_summaries = False
+        else:
+            try:
+                # Check if summary table exists
+                summary_check_query = f"SELECT COUNT(*) as count FROM `{PROJECT_ID}.{DATASET}.{SUMMARY}` LIMIT 1"
+                check_job = client.query(summary_check_query)
+                check_job.result()  # Wait for query to complete
+                summary_table_exists = True
+            except Exception as e:
+                st.warning(f"⚠️ Summary table does not exist: `{DATASET}.{SUMMARY}`")
+                show_summaries = False
     
     # Sender/Recipient filters
     st.subheader("Email Filters")
@@ -161,7 +183,7 @@ with col2:
 
 # Search function with caching
 @st.cache_data(ttl=300)  # Cache for 5 minutes
-def search_emails(query, limit, search_type, date_from, date_to, sender_filter, recipient_filter):
+def search_emails(query, limit, search_type, date_from, date_to, sender_filter, recipient_filter, show_summaries, summary_table):
     """Execute BigQuery search with filters"""
     
     if not query:
@@ -171,15 +193,18 @@ def search_emails(query, limit, search_type, date_from, date_to, sender_filter, 
     query_params = []
     where_conditions = []
     
+    # Table prefix for joins (use alias when joining)
+    table_prefix = "e." if (show_summaries and summary_table) else ""
+    
     # Determine which fields to search
     if search_type == "Subject":
-        search_fields = ["Subject"]
+        search_fields = [f"{table_prefix}Subject"]
     elif search_type == "Body":
-        search_fields = ["Body"]
+        search_fields = [f"{table_prefix}Body"]
     # elif search_type == "Summary":  # Not available in current table
     #     search_fields = ["Summary"]
     else:  # All fields
-        search_fields = ["Subject", "Body"]  # "Summary" - not available in current table
+        search_fields = [f"{table_prefix}Subject", f"{table_prefix}Body"]  # "Summary" - not available in current table
     
     # Split into keywords and search in selected fields
     keywords = query.split()
@@ -196,40 +221,59 @@ def search_emails(query, limit, search_type, date_from, date_to, sender_filter, 
     
     # Sender filter
     if sender_filter:
-        where_conditions.append("LOWER(`From`) LIKE LOWER(@sender)")
+        where_conditions.append(f"LOWER({table_prefix}`From`) LIKE LOWER(@sender)")
         query_params.append(bigquery.ScalarQueryParameter("sender", "STRING", f"%{sender_filter}%"))
     
     # Recipient filter
     if recipient_filter:
-        where_conditions.append("LOWER(`To`) LIKE LOWER(@recipient)")
+        where_conditions.append(f"LOWER({table_prefix}`To`) LIKE LOWER(@recipient)")
         query_params.append(bigquery.ScalarQueryParameter("recipient", "STRING", f"%{recipient_filter}%"))
     
     # Date filters
     if date_from:
-        where_conditions.append("Date_Sent >= @date_from")
+        where_conditions.append(f"{table_prefix}Date_Sent >= @date_from")
         query_params.append(bigquery.ScalarQueryParameter("date_from", "DATE", date_from))
     
     if date_to:
-        where_conditions.append("Date_Sent <= @date_to")
+        where_conditions.append(f"{table_prefix}Date_Sent <= @date_to")
         query_params.append(bigquery.ScalarQueryParameter("date_to", "DATE", date_to))
     
     where_clause = " AND ".join(where_conditions)
     
-    # Simple query - just search and sort by date
-    sql_query = f"""
-    SELECT 
-        id,
-        Body,
-        Subject,
-        `From` as sender,
-        `To` as recipient,
-        Date_Sent as date,
-        filename
-    FROM `{PROJECT_ID}.{DATASET}.{TABLE}`
-    WHERE {where_clause}
-    ORDER BY Date_Sent DESC
-    LIMIT @limit
-    """
+    # Build query with optional summary join
+    if show_summaries and summary_table:
+        sql_query = f"""
+        SELECT 
+            e.id,
+            e.Body,
+            e.Subject,
+            e.`From` as sender,
+            e.`To` as recipient,
+            e.Date_Sent as date,
+            e.filename,
+            s.summary
+        FROM `{PROJECT_ID}.{DATASET}.{TABLE}` e
+        LEFT JOIN `{PROJECT_ID}.{DATASET}.{summary_table}` s
+        ON e.id = s.id
+        WHERE {where_clause}
+        ORDER BY e.Date_Sent DESC
+        LIMIT @limit
+        """
+    else:
+        sql_query = f"""
+        SELECT 
+            id,
+            Body,
+            Subject,
+            `From` as sender,
+            `To` as recipient,
+            Date_Sent as date,
+            filename
+        FROM `{PROJECT_ID}.{DATASET}.{TABLE}`
+        WHERE {where_clause}
+        ORDER BY Date_Sent DESC
+        LIMIT @limit
+        """
     
     query_params.append(bigquery.ScalarQueryParameter("limit", "INT64", limit))
     
@@ -263,7 +307,7 @@ def highlight_text(text, query_terms, case_sensitive=False):
 if search_button or search_query:
     if search_query:
         with st.spinner("🔍 Searching emails..."):
-            results_df = search_emails(search_query, limit, search_type, date_from, date_to, sender_filter, recipient_filter)
+            results_df = search_emails(search_query, limit, search_type, date_from, date_to, sender_filter, recipient_filter, show_summaries and summary_table_exists, SUMMARY if show_summaries and summary_table_exists else None)
             
             # Store in session state for export
             st.session_state.results_df = results_df
@@ -302,25 +346,20 @@ if search_button or search_query:
                     st.markdown(f"**From:** {row['sender']}")
                     st.markdown(f"**To:** {row['recipient']}")
                     
-                    # Show summary if available (commented out - not in current table)
-                    # if pd.notna(row['Summary']) and row['Summary']:
-                    #     highlighted_summary = highlight_text(row['Summary'][:300], search_query)
-                    #     st.markdown(f"**Summary:** {highlighted_summary}...", unsafe_allow_html=True)
-                    
-                    # Show body preview with highlighted search terms
-                    body_preview = row['Body'][:500] if len(row['Body']) > 500 else row['Body']
-                    highlighted_body = highlight_text(body_preview, search_query)
-                    st.markdown(f"**Body:** {highlighted_body}{'...' if len(row['Body']) > 500 else ''}", unsafe_allow_html=True)
+                    # Compact view when showing summaries
+                    if show_summaries and summary_table_exists and 'summary' in row and pd.notna(row['summary']) and row['summary']:
+                        highlighted_summary = highlight_text(str(row['summary']), search_query)
+                        st.markdown(f"**Summary:** {highlighted_summary}", unsafe_allow_html=True)
+                    else:
+                        # Show body preview with highlighted search terms only if not showing summaries
+                        body_preview = row['Body'][:500] if len(row['Body']) > 500 else row['Body']
+                        highlighted_body = highlight_text(body_preview, search_query)
+                        st.markdown(f"**Body:** {highlighted_body}{'...' if len(row['Body']) > 500 else ''}", unsafe_allow_html=True)
                     
                     st.caption(f"ID: {row['id']} • Source file: {row['filename']}")
                     
-                    # Action buttons
-                    col1, col2, col3 = st.columns([1, 1, 4])
-                    with col1:
-                        if st.button("📋 Copy", key=f"copy_{idx}"):
-                            st.code(row['filename'])
-                    with col2:
-                        view_full = st.button("🔗 View Full", key=f"view_{idx}")
+                    # Action button
+                    view_full = st.button("🔗 View Full", key=f"view_{idx}")
                     
                     # Show full body if button clicked
                     if view_full:
@@ -329,6 +368,7 @@ if search_button or search_query:
                             st.markdown(highlighted_full_body, unsafe_allow_html=True)
                     
                     st.markdown("---")
+                
         else:
             st.warning("⚠️ No results found. Try different search terms or filters.")
     else:
