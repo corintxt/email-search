@@ -218,7 +218,7 @@ def search_emails(query, limit, search_type, date_from, date_to, sender_filter, 
     # Simple query - just search and sort by date
     sql_query = f"""
     SELECT 
-        email_id,
+        id,
         Body,
         Subject,
         `From` as sender,
@@ -295,7 +295,7 @@ if search_button or search_query:
                     with col1:
                         # Highlight search terms in subject
                         highlighted_subject = highlight_text(row['Subject'], search_query)
-                        st.markdown(f"### {highlighted_subject}", unsafe_allow_html=True)
+                        st.markdown(f"#### {highlighted_subject}", unsafe_allow_html=True)
                     with col2:
                         st.markdown(f"**Date:** {row['date']}")
                     
@@ -312,7 +312,7 @@ if search_button or search_query:
                     highlighted_body = highlight_text(body_preview, search_query)
                     st.markdown(f"**Body:** {highlighted_body}{'...' if len(row['Body']) > 500 else ''}", unsafe_allow_html=True)
                     
-                    st.caption(f"File: {row['filename']}")
+                    st.caption(f"ID: {row['id']} • Source file: {row['filename']}")
                     
                     # Action buttons
                     col1, col2, col3 = st.columns([1, 1, 4])
