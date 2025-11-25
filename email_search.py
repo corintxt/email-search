@@ -110,6 +110,43 @@ with st.sidebar:
         "Search in:",
         ["All fields", "Subject", "Body"]  # "Summary" - not available in current table
     )
+    
+    # Category filter - fetch categories if summary table exists
+    category_filter = None
+    if SUMMARY:
+        try:
+            # Try to fetch unique categories from summary table
+            categories_query = f"SELECT DISTINCT category FROM `{PROJECT_ID}.{DATASET}.{SUMMARY}` WHERE category IS NOT NULL ORDER BY category"
+            categories_job = client.query(categories_query)
+            categories_df = categories_job.to_dataframe()
+            
+            if not categories_df.empty:
+                categories_list = ["All categories"] + categories_df['category'].tolist()
+                selected_category = st.selectbox("Filter by category:", categories_list)
+                if selected_category != "All categories":
+                    category_filter = selected_category
+        except Exception as e:
+            # If query fails, don't show category filter
+            pass
+    
+    # Sender/Recipient filters
+    st.subheader("Email Filters")
+    sender_filter = st.text_input("From (sender contains):", "")
+    recipient_filter = st.text_input("To (recipient contains):", "")
+    
+    # Date range filter
+    st.subheader("Date Range")
+    use_date_filter = st.checkbox("Filter by date range")
+    
+    if use_date_filter:
+        col1, col2 = st.columns(2)
+        with col1:
+            date_from = st.date_input("From")
+        with col2:
+            date_to = st.date_input("To")
+    else:
+        date_from = None
+        date_to = None
 
     # Summary display option
     st.subheader("Display Options")
@@ -131,25 +168,6 @@ with st.sidebar:
             except Exception as e:
                 st.warning(f"⚠️ Summary table does not exist: `{DATASET}.{SUMMARY}`")
                 show_summaries = False
-    
-    # Sender/Recipient filters
-    st.subheader("Email Filters")
-    sender_filter = st.text_input("From (sender contains):", "")
-    recipient_filter = st.text_input("To (recipient contains):", "")
-    
-    # Date range filter
-    st.subheader("Date Range")
-    use_date_filter = st.checkbox("Filter by date range")
-    
-    if use_date_filter:
-        col1, col2 = st.columns(2)
-        with col1:
-            date_from = st.date_input("From")
-        with col2:
-            date_to = st.date_input("To")
-    else:
-        date_from = None
-        date_to = None
 
     # Export option
     st.subheader("Export")
@@ -183,7 +201,7 @@ with col2:
 
 # Search function with caching
 @st.cache_data(ttl=300)  # Cache for 5 minutes
-def search_emails(query, limit, search_type, date_from, date_to, sender_filter, recipient_filter, show_summaries, summary_table):
+def search_emails(query, limit, search_type, date_from, date_to, sender_filter, recipient_filter, show_summaries, summary_table, category_filter):
     """Execute BigQuery search with filters"""
     
     if not query:
@@ -238,6 +256,11 @@ def search_emails(query, limit, search_type, date_from, date_to, sender_filter, 
         where_conditions.append(f"{table_prefix}Date_Sent <= @date_to")
         query_params.append(bigquery.ScalarQueryParameter("date_to", "DATE", date_to))
     
+    # Category filter (only applies when joining with summary table)
+    if category_filter and show_summaries and summary_table:
+        where_conditions.append("s.category = @category")
+        query_params.append(bigquery.ScalarQueryParameter("category", "STRING", category_filter))
+    
     where_clause = " AND ".join(where_conditions)
     
     # Build query with optional summary join
@@ -251,7 +274,8 @@ def search_emails(query, limit, search_type, date_from, date_to, sender_filter, 
             e.`To` as recipient,
             e.Date_Sent as date,
             e.filename,
-            s.summary
+            s.summary,
+            s.category
         FROM `{PROJECT_ID}.{DATASET}.{TABLE}` e
         LEFT JOIN `{PROJECT_ID}.{DATASET}.{summary_table}` s
         ON e.id = s.id
@@ -307,7 +331,7 @@ def highlight_text(text, query_terms, case_sensitive=False):
 if search_button or search_query:
     if search_query:
         with st.spinner("🔍 Searching emails..."):
-            results_df = search_emails(search_query, limit, search_type, date_from, date_to, sender_filter, recipient_filter, show_summaries and summary_table_exists, SUMMARY if show_summaries and summary_table_exists else None)
+            results_df = search_emails(search_query, limit, search_type, date_from, date_to, sender_filter, recipient_filter, show_summaries and summary_table_exists, SUMMARY if show_summaries and summary_table_exists else None, category_filter)
             
             # Store in session state for export
             st.session_state.results_df = results_df
@@ -356,7 +380,16 @@ if search_button or search_query:
                         highlighted_body = highlight_text(body_preview, search_query)
                         st.markdown(f"**Body:** {highlighted_body}{'...' if len(row['Body']) > 500 else ''}", unsafe_allow_html=True)
                     
-                    st.caption(f"ID: {row['id']} • Source file: {row['filename']}")
+                    # Caption with category badge
+                    caption_parts = [f"ID: {row['id']}", f"Source file: {row['filename']}"]
+                    
+                    # Add category badge if available
+                    if show_summaries and summary_table_exists and 'category' in row and pd.notna(row['category']) and row['category']:
+                        category_html = f'<span style="background-color: #e8f4f8; color: #0066cc; padding: 3px 8px; border-radius: 3px; font-size: 0.85em; font-weight: 500; margin-left: 10px;">{row["category"]}</span>'
+                        st.caption(f"{' • '.join(caption_parts)}")
+                        st.markdown(category_html, unsafe_allow_html=True)
+                    else:
+                        st.caption(' • '.join(caption_parts))
                     
                     # Action button
                     view_full = st.button("🔗 View Full", key=f"view_{idx}")
