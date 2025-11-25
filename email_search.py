@@ -103,7 +103,7 @@ with st.sidebar:
     st.header("Search Filters")
     
     # Results limit
-    limit = st.slider("Max results", 10, 500, 100, 10)
+    limit = st.slider("Max results", 50, 1000, 100, 50)
 
     # Search type
     search_type = st.radio(
@@ -113,12 +113,14 @@ with st.sidebar:
     
     # Category filter - fetch categories if summary table exists
     category_filter = None
+    summary_table_available = False
     if SUMMARY:
         try:
             # Try to fetch unique categories from summary table
             categories_query = f"SELECT DISTINCT category FROM `{PROJECT_ID}.{DATASET}.{SUMMARY}` WHERE category IS NOT NULL ORDER BY category"
             categories_job = client.query(categories_query)
             categories_df = categories_job.to_dataframe()
+            summary_table_available = True
             
             if not categories_df.empty:
                 categories_list = ["All categories"] + categories_df['category'].tolist()
@@ -127,6 +129,7 @@ with st.sidebar:
                     category_filter = selected_category
         except Exception as e:
             # If query fails, don't show category filter
+            summary_table_available = False
             pass
     
     # Sender/Recipient filters
@@ -201,15 +204,19 @@ with col2:
 
 # Search function with caching
 @st.cache_data(ttl=300)  # Cache for 5 minutes
-def search_emails(query, limit, search_type, date_from, date_to, sender_filter, recipient_filter, show_summaries, summary_table, category_filter):
+def search_emails(query, limit, search_type, date_from, date_to, sender_filter, recipient_filter, show_summaries, summary_table, category_filter, summary_table_available):
     """Execute BigQuery search with filters"""
     
     # Build WHERE clause based on search type
     query_params = []
     where_conditions = []
     
+    # Determine if we need to join with summary table
+    # Join if either showing summaries OR filtering by category
+    needs_summary_join = (show_summaries and summary_table) or (category_filter and summary_table_available)
+    
     # Table prefix for joins (use alias when joining)
-    table_prefix = "e." if (show_summaries and summary_table) else ""
+    table_prefix = "e." if needs_summary_join else ""
     
     # Add keyword search only if query is provided
     if query:
@@ -255,15 +262,15 @@ def search_emails(query, limit, search_type, date_from, date_to, sender_filter, 
         where_conditions.append(f"{table_prefix}Date_Sent <= @date_to")
         query_params.append(bigquery.ScalarQueryParameter("date_to", "DATE", date_to))
     
-    # Category filter (only applies when joining with summary table)
-    if category_filter and show_summaries and summary_table:
+    # Category filter (applies when joining with summary table)
+    if category_filter and needs_summary_join:
         where_conditions.append("s.category = @category")
         query_params.append(bigquery.ScalarQueryParameter("category", "STRING", category_filter))
     
     where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
     
     # Build query with optional summary join
-    if show_summaries and summary_table:
+    if needs_summary_join:
         sql_query = f"""
         SELECT 
             e.id,
@@ -329,7 +336,7 @@ def highlight_text(text, query_terms, case_sensitive=False):
 # Execute search
 if search_button or search_query is not None:
     with st.spinner("🔍 Searching emails..."):
-        results_df = search_emails(search_query, limit, search_type, date_from, date_to, sender_filter, recipient_filter, show_summaries and summary_table_exists, SUMMARY if show_summaries and summary_table_exists else None, category_filter)
+        results_df = search_emails(search_query, limit, search_type, date_from, date_to, sender_filter, recipient_filter, show_summaries and summary_table_exists, SUMMARY if (show_summaries and summary_table_exists) or (category_filter and summary_table_available) else None, category_filter, summary_table_available)
         
         # Store in session state for export
         st.session_state.results_df = results_df
@@ -379,8 +386,8 @@ if search_button or search_query is not None:
                         st.markdown(f"**Body:** {highlighted_body}{'...' if len(row['Body']) > 500 else ''}", unsafe_allow_html=True)
                     
                     # Caption with category badge
-                    # Add category badge if available (as first item)
-                    if show_summaries and summary_table_exists and 'category' in row and pd.notna(row['category']) and row['category']:
+                    # Add category badge if available (regardless of show_summaries checkbox)
+                    if 'category' in row and pd.notna(row['category']) and row['category']:
                         category_html = f'<span style="background-color: #e8f4f8; color: #0066cc; padding: 3px 8px; border-radius: 3px; font-size: 0.85em; font-weight: 500;">{row["category"]}</span>'
                         caption_text = f"{category_html} • ID: {row['id']} • Source file: {row['filename']}"
                         st.caption(caption_text, unsafe_allow_html=True)
